@@ -91,6 +91,7 @@ test('observed percentage deltas supersede a window-to-date estimate without ass
   const initial = value.buildReport(base(), calls(NOW - HOUR, 20), null, rates);
   const later = base({ now: NOW + 5 * MINUTE, snapshotFetchedAt: NOW + 4 * MINUTE });
   later.utilization.five_hour.utilization = 60;
+  later.utilization.five_hour.resets_at = new Date(NOW + HOUR - 761).toISOString();
   const events = [...calls(NOW - HOUR, 20), ...calls(NOW + MINUTE, 30)];
   const result = value.buildReport(later, events, initial.state, rates);
   const row = result.data.windows[0];
@@ -98,6 +99,7 @@ test('observed percentage deltas supersede a window-to-date estimate without ass
   assert.equal(row.sample.points, 20);
   assert.equal(row.totalUSD, 150, '$30 moved 20 real percentage points');
   assert.equal(row.remainingUSD, 60);
+  assert.equal(result.state.cycles.filter((cycle) => cycle.key === 'five_hour').length, 1, 'server timestamp jitter does not split a cycle');
   const repeated = value.buildReport(later, events, result.state, rates);
   assert.deepEqual(repeated.data.windows, result.data.windows, 're-reading the same snapshot never double-counts');
 });

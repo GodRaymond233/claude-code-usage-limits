@@ -355,7 +355,7 @@ async function desktopUsage(options) {
     const payload = { accountUuid: opts.accountUuid || null, configDir: configDir(), desktopConfigDir: directory, timeoutMs: opts.timeoutMs };
     const stdout = opts.desktopExec ? await opts.desktopExec(payload) : await new Promise((resolve, reject) => {
       const child = execFile('python3', [path.join(__dirname, 'desktop-usage.py')], {
-        env, timeout: 15000, maxBuffer: MAX_BODY, windowsHide: true,
+        env, timeout: 20000, maxBuffer: MAX_BODY, windowsHide: true,
       }, (err, out) => err ? reject(err) : resolve(out));
       child.stdin.on('error', () => {});
       child.stdin.end(JSON.stringify(payload));

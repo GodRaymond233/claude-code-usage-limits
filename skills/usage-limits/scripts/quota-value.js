@@ -104,7 +104,8 @@ function buildReport(base, allEvents, previous, rates) {
     if (now - fetchedAt > MAX_SNAPSHOT_AGE) { row.status = 'stale'; continue; }
     if (allEvents.partial) { row.status = 'partial-scan'; continue; }
 
-    let cycle = state.cycles.find((entry) => entry.key === spec.key && entry.resetsAt === resetsAt);
+    // The same server reset can drift by sub-second precision between reads.
+    let cycle = state.cycles.find((entry) => entry.key === spec.key && Math.abs(entry.resetsAt - resetsAt) <= 2000);
     if (!cycle) {
       cycle = { key: spec.key, resetsAt, anchor: { at: fetchedAt, percent }, sample: null, latest: null };
       state.cycles.push(cycle);
@@ -238,7 +239,7 @@ async function collect(options) {
   const accountId = usage.accountUuid();
   let base = usage.collectClaude(Date.now());
   let refresh = { skipped: 'local-only', outcome: null };
-  if (!opts.offline) refresh = await live.refreshIfStale({ cacheFetchedAtMs: base.snapshotFetchedAt, accountUuid: accountId });
+  if (!opts.offline) refresh = await live.refreshIfStale({ cacheFetchedAtMs: base.snapshotFetchedAt, accountUuid: accountId, timeoutMs: 15000 });
   base = Object.assign(usage.collectClaude(Date.now()), { accountId: usage.accountUuid() });
   const events = await usage.readClaudeEvents(base.now - 8 * DAY, { rates });
   let previous = null;

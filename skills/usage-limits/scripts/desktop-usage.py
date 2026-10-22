@@ -101,7 +101,7 @@ def read_usage(options):
             'Accept': 'application/json', 'User-Agent': 'claude-usage-limits/desktop',
         })
         timeout_ms = options.get('timeoutMs')
-        timeout = min(5, max(0.1, timeout_ms / 1000)) if isinstance(timeout_ms, (int, float)) else 5
+        timeout = min(15, max(0.1, timeout_ms / 1000)) if isinstance(timeout_ms, (int, float)) else 15
         try:
             with urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout) as response:
                 raw = response.read(1024 * 1024 + 1)
