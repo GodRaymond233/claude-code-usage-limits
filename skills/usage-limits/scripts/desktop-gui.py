@@ -10,6 +10,7 @@ import threading
 
 import gi
 gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -32,6 +33,7 @@ notebook > header tab { padding: 10px 20px; }
 .banner { border-radius: 8px; padding: 12px 16px; background: #eaf2ff; color: #1e40af; }
 .warning { background: #fff4dc; color: #92400e; }
 .primary { background: #2563eb; color: white; border: 1px solid #2563eb; border-radius: 6px; padding: 8px 14px; }
+.primary:disabled { background: #e2e8f0; color: #7c8ba1; border-color: #e2e8f0; }
 .secondary { border-radius: 6px; padding: 8px 14px; }
 progressbar trough { min-height: 7px; border-radius: 6px; background: #e9eef6; border: none; }
 progressbar progress { min-height: 7px; border-radius: 6px; background: #3b82f6; border: none; }
@@ -138,6 +140,7 @@ class QuotaCard(Gtk.Box):
 class Window(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title='Claude 额度价值')
+        self.set_icon_name('utilities-system-monitor')
         self.set_default_size(1060, 860)
         self.set_size_request(880, 650)
         self.busy, self.closed, self.last_data = False, False, None
@@ -312,6 +315,8 @@ class Window(Gtk.ApplicationWindow):
         self.stop_button.set_sensitive(active)
         if not active:
             self.start_button.set_label('从 0% 开始测量' if rows['five_hour'].get('percentUsed') == 0 else '等待下次清零并测量')
+        else:
+            self.start_button.set_label('已等待清零' if current['phase'] == 'armed' else '已开始记录')
         self.measure_status.set_text(PHASES.get(current['phase'], '等待测量') if current else '尚未开始测量')
         if current:
             spent = current['spent']
