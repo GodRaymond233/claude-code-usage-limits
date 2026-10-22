@@ -62,9 +62,76 @@ function summary(events, rates) {
   };
 }
 
+const ACTIVE_MEASUREMENTS = new Set(['armed', 'waiting-window', 'running']);
+const MEASUREMENT_PHASES = { armed: '等待下次清零', 'waiting-window': '已记录 0%，等待新周期',
+  running: '正在测量', completed: '测量已完成', stopped: '已手动结束', expired: '周期已结束' };
+
+function updateMeasurement(state, base, events, rows, rates, options) {
+  const opts = options || {};
+  const history = Array.isArray(state.measurements) ? state.measurements : [];
+  const window = rows.find((row) => row.key === 'five_hour');
+  const fresh = Number.isFinite(base.snapshotFetchedAt) && base.snapshotFetchedAt <= base.now &&
+    base.now - base.snapshotFetchedAt <= MAX_SNAPSHOT_AGE;
+  let current = history.find((entry) => ACTIVE_MEASUREMENTS.has(entry.phase));
+  let created = false;
+  if (opts.measureStart && !current) {
+    current = { id: String(base.now), phase: 'armed', armedAt: base.now, zeroAt: null,
+      startAt: null, resetsAt: null, endedAt: null, endReason: null, spent: summary([], rates) };
+    history.unshift(current);
+    created = true;
+  }
+  if (current && window) {
+    if (current.phase === 'armed' && fresh && window.percentUsed === 0 &&
+        (base.snapshotFetchedAt >= current.armedAt || (created && opts.freshlyFetched))) {
+      current.phase = 'waiting-window';
+      current.zeroAt = base.snapshotFetchedAt;
+      current.startAt = base.snapshotFetchedAt;
+    }
+    if (current.phase === 'waiting-window' && fresh && base.snapshotFetchedAt >= current.zeroAt && window.resetsAt > base.now) {
+      current.phase = 'running';
+      current.resetsAt = window.resetsAt;
+      current.startAt = Math.max(current.zeroAt, window.windowStart);
+    }
+    const refusal = Number.isFinite(current.startAt) ? events.find((event) =>
+      event.at >= current.startAt && event.at <= base.now && event.rejected &&
+      event.rejected.key === 'five_hour' && event.rejected.status === 'rejected' &&
+      (!current.resetsAt || Math.abs(event.rejected.resetsAt - current.resetsAt) <= 2000)) : null;
+    if (refusal) {
+      current.phase = 'completed';
+      current.endedAt = refusal.at;
+      current.endReason = 'five-hour-rejection';
+    } else if (current.phase === 'running' && fresh && window.percentUsed === 100 &&
+               Math.abs(window.resetsAt - current.resetsAt) <= 2000) {
+      current.phase = 'completed';
+      current.endedAt = base.snapshotFetchedAt;
+      current.endReason = 'meter-full';
+    } else if (current.phase === 'running' && base.now >= current.resetsAt) {
+      current.phase = 'expired';
+      current.endedAt = current.resetsAt;
+      current.endReason = 'cycle-ended';
+    }
+    if (opts.measureStop && ACTIVE_MEASUREMENTS.has(current.phase)) {
+      current.phase = 'stopped';
+      current.endedAt = base.now;
+      current.endReason = current.zeroAt === null ? 'cancelled' : 'manual-stop';
+    }
+    if (Number.isFinite(current.startAt)) {
+      const cutoff = Math.min(current.endedAt || base.now, current.resetsAt || base.now);
+      current.spent = summary(events.filter((event) => !event.rejected && event.at >= current.startAt && event.at <= cutoff), rates);
+    }
+    if (!current.observedAt || base.snapshotFetchedAt >= current.observedAt) {
+      current.lastPercent = window.percentUsed;
+      current.observedAt = base.snapshotFetchedAt;
+    }
+    current.phaseText = MEASUREMENT_PHASES[current.phase];
+  }
+  state.measurements = history.slice(0, 20);
+  return { current: current || state.measurements[0] || null, history: state.measurements };
+}
+
 // The denominator must be an account reading. Percentages reconstructed from
 // local spend would merely divide that spend by its own earlier estimate.
-function buildReport(base, allEvents, previous, rates) {
+function buildReport(base, allEvents, previous, rates, options) {
   const now = base.now;
   const identity = identityFor(base, rates);
   const state = base.accountId && previous && previous.version === 1 && previous.identity === identity && Array.isArray(previous.cycles)
@@ -150,11 +217,14 @@ function buildReport(base, allEvents, previous, rates) {
 
   state.cycles.sort((a, b) => b.resetsAt - a.resetsAt);
   state.cycles = state.cycles.slice(0, MAX_CYCLES);
+  const measurement = updateMeasurement(state, base, allEvents, rows, rates, options);
+  for (const row of rows) row.statusText = STATUS[row.status];
   return {
     data: {
       now, plan: base.plan, snapshotFetchedAt: fetchedAt, snapshotSource: base.snapshotSource,
       priceSource: PRICE_SOURCE, pricingKey: identity, coverage: 'local-transcripts-only',
-      windows: rows,
+      windows: rows, accountKnown: Boolean(base.accountId),
+      measurement: measurement.current, measurements: measurement.history,
       history: state.cycles.filter((entry) => entry.resetsAt <= now && entry.sample).map((entry) => ({
         key: entry.key, resetsAt: entry.resetsAt, totalUSD: entry.sample.totalUSD,
         method: entry.sample.method, points: entry.sample.points, measuredAt: entry.sample.at,
@@ -229,6 +299,7 @@ function render(data) {
   lines.push('估值不是额外账单；只覆盖本机日志，其他设备或普通 Chat 的消耗会影响反推。');
   lines.push('估值对应采样时的模型与缓存组合；使用组合变化后，API 等价容量也会变化。');
   lines.push('总价值和剩余价值按额度快照时间计算；token 与已用费用包含快照之后的新调用。');
+  if (data.measurement) lines.push('完整测量：' + MEASUREMENT_PHASES[data.measurement.phase] + '，本次 API 等价消耗 ' + money(data.measurement.spent.usd));
   return lines.join('\n');
 }
 
@@ -241,21 +312,34 @@ async function collect(options) {
   let refresh = { skipped: 'local-only', outcome: null };
   if (!opts.offline) {
     const request = { cacheFetchedAtMs: base.snapshotFetchedAt, accountUuid: accountId, timeoutMs: 15000 };
-    refresh = opts.refresh ? await live.refresh(request) : await live.refreshIfStale(request);
+    refresh = opts.refresh || opts.measureStart ? await live.refresh(request) : await live.refreshIfStale(request);
   }
   base = Object.assign(usage.collectClaude(Date.now()), { accountId: usage.accountUuid() });
+  if (opts.measureStart && !base.accountId) throw new Error('无法识别当前 Claude 账号，请先登录并刷新额度。');
   const events = await usage.readClaudeEvents(base.now - 8 * DAY, { rates });
-  let previous = null;
-  try { previous = JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch (err) { /* First observation. */ }
-  const result = buildReport(base, events, previous, rates);
-  result.data.refresh = refresh.outcome ? (refresh.outcome.ok ? 'live' : refresh.outcome.kind) : refresh.skipped;
-  try {
-    fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
-    result.data.persistence = usage.writeJsonAtomic(stateFile(), result.state);
-  } catch (err) {
-    result.data.persistence = false;
+  // The GUI and the background sampler share a read-modify-write transaction.
+  // Atomic rename alone would let one process erase another's measurement click.
+  const lock = stateFile() + '.lock';
+  fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
+  let held = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try { fs.mkdirSync(lock); held = true; break; } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > MINUTE) fs.rmdirSync(lock); } catch (ignored) { /* Another writer released it. */ }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
-  return result.data;
+  if (!held) throw new Error('另一个窗口正在保存统计，请稍后重试。');
+  try {
+    let previous = null;
+    try { previous = JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch (err) { /* First observation. */ }
+    const result = buildReport(base, events, previous, rates, Object.assign({}, opts, { freshlyFetched: Boolean(refresh.outcome && refresh.outcome.ok) }));
+    result.data.refresh = refresh.outcome ? (refresh.outcome.ok ? 'live' : refresh.outcome.kind) : refresh.skipped;
+    result.data.persistence = usage.writeJsonAtomic(stateFile(), result.state);
+    return result.data;
+  } finally {
+    fs.rmdirSync(lock);
+  }
 }
 
 async function main(argv) {
@@ -265,11 +349,14 @@ async function main(argv) {
     if (arg === '--json') options.json = true;
     else if (arg === '--offline') options.offline = true;
     else if (arg === '--refresh') options.refresh = true;
+    else if (arg === '--measure-start') options.measureStart = true;
+    else if (arg === '--measure-stop') options.measureStop = true;
     else if (arg === '--prices' && argv[i + 1] && !argv[i + 1].startsWith('--')) options.prices = argv[++i];
     else if (arg === '--host' && argv[i + 1] === 'claude') i++;
     else throw new Error('value: unsupported or incomplete option ' + arg + '; use --json, --refresh, --offline, --prices FILE or --host claude');
   }
   if (options.refresh && options.offline) throw new Error('value: --refresh and --offline cannot be combined');
+  if (options.measureStart && (options.measureStop || options.offline)) throw new Error('value: --measure-start needs online usage and cannot be combined with --measure-stop');
   const data = await collect(options);
   process.stdout.write((options.json ? JSON.stringify(data, null, 2) : render(data)) + '\n');
   return options.refresh && data.refresh !== 'live' ? 1 : 0;

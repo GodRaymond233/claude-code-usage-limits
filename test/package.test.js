@@ -124,6 +124,7 @@ test('both hosts get everything they need to install it', () => {
     'skills/usage-limits/scripts/install-codex-hook.js',
     'skills/usage-limits/scripts/pulse.js',
     'skills/usage-limits/scripts/desktop-usage.py',
+    'skills/usage-limits/scripts/desktop-gui.py',
   ]) {
     assert.ok(
       files.includes(file),

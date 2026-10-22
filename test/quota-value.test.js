@@ -71,6 +71,70 @@ function calls(at, total, model) {
   }));
 }
 
+function zeroSource(extra) {
+  const source = base(extra);
+  source.utilization.five_hour = { utilization: 0, resets_at: null };
+  return source;
+}
+
+test('a complete measurement begins at a real zero and seals at the first 5h rejection', () => {
+  const started = value.buildReport(zeroSource(), calls(NOW - HOUR, 999), null, rates,
+    { measureStart: true, freshlyFetched: true });
+  assert.equal(started.data.measurement.phase, 'waiting-window');
+  assert.equal(started.data.measurement.spent.usd, 0, 'old-window traffic is not a zero-start measurement');
+  const source = base({ now: NOW + 5 * MINUTE, snapshotFetchedAt: NOW + 4 * MINUTE });
+  source.utilization.five_hour = { utilization: 30, resets_at: new Date(NOW + 4 * HOUR).toISOString() };
+  const events = [...calls(NOW + MINUTE, 20),
+    { at: NOW + 3 * MINUTE, rejected: { key: 'five_hour', status: 'rejected', resetsAt: NOW + 4 * HOUR } },
+    ...calls(NOW + 4 * MINUTE, 100)];
+  const finished = value.buildReport(source, events, started.state, rates);
+  assert.equal(finished.data.measurement.phase, 'completed');
+  assert.equal(finished.data.measurement.endReason, 'five-hour-rejection');
+  assert.equal(finished.data.measurement.spent.usd, 20);
+  assert.equal(finished.data.measurement.spent.tokens, 500);
+  const repeated = value.buildReport(source, [...events, ...calls(NOW + 4 * MINUTE, 999)], finished.state, rates);
+  assert.deepEqual(repeated.data.measurement, finished.data.measurement, 'a sealed result cannot absorb later traffic');
+});
+
+test('arming at a nonzero percentage waits for a newer real zero reading', () => {
+  const armed = value.buildReport(base(), calls(NOW - HOUR, 20), null, rates, { measureStart: true, freshlyFetched: true });
+  assert.equal(armed.data.measurement.phase, 'armed');
+  const old = value.buildReport(zeroSource(), [], armed.state, rates);
+  assert.equal(old.data.measurement.phase, 'armed', 'a cached zero from before the click is not a new baseline');
+  const fresh = value.buildReport(zeroSource({ now: NOW + 2 * MINUTE, snapshotFetchedAt: NOW + MINUTE }), [], old.state, rates);
+  assert.equal(fresh.data.measurement.phase, 'waiting-window');
+  assert.equal(fresh.data.measurement.zeroAt, NOW + MINUTE);
+  const twice = value.buildReport(zeroSource(), [], fresh.state, rates, { measureStart: true, freshlyFetched: true });
+  assert.equal(twice.data.measurements.length, 1, 'only one full measurement can be active');
+});
+
+test('manual stop and natural rollover remain partial measurements', () => {
+  const started = value.buildReport(zeroSource(), [], null, rates, { measureStart: true, freshlyFetched: true });
+  const source = base({ now: NOW + 5 * MINUTE, snapshotFetchedAt: NOW + 4 * MINUTE });
+  source.utilization.five_hour = { utilization: 30, resets_at: new Date(NOW + HOUR).toISOString() };
+  const running = value.buildReport(source, calls(NOW + MINUTE, 12), started.state, rates);
+  assert.equal(running.data.measurement.phase, 'running');
+  const stopped = value.buildReport(source, calls(NOW + MINUTE, 12), running.state, rates, { measureStop: true });
+  assert.equal(stopped.data.measurement.phase, 'stopped');
+  assert.equal(stopped.data.measurement.endReason, 'manual-stop');
+  assert.equal(stopped.data.measurement.spent.usd, 12);
+  const expired = value.buildReport(zeroSource({ now: NOW + 2 * HOUR, snapshotFetchedAt: NOW + 2 * HOUR - MINUTE }),
+    [...calls(NOW + MINUTE, 12), ...calls(NOW + HOUR + MINUTE, 999)], running.state, rates);
+  assert.equal(expired.data.measurement.phase, 'expired');
+  assert.equal(expired.data.measurement.spent.usd, 12, 'the next period cannot enter an expired measurement');
+});
+
+test('a first 100% snapshot records its cutoff and excludes later costs', () => {
+  const started = value.buildReport(zeroSource(), [], null, rates, { measureStart: true, freshlyFetched: true });
+  const source = base({ now: NOW + 5 * MINUTE, snapshotFetchedAt: NOW + 3 * MINUTE });
+  source.utilization.five_hour = { utilization: 100, resets_at: new Date(NOW + HOUR).toISOString() };
+  const finished = value.buildReport(source, [...calls(NOW + MINUTE, 25), ...calls(NOW + 4 * MINUTE, 99)], started.state, rates);
+  assert.equal(finished.data.measurement.phase, 'completed');
+  assert.equal(finished.data.measurement.endReason, 'meter-full');
+  assert.equal(finished.data.measurement.spent.usd, 25);
+  assert.equal(finished.data.measurement.endedAt, NOW + 3 * MINUTE);
+});
+
 test('5h and weekly capacity use their own snapshot-aligned spend and token splits', () => {
   const events = [...calls(NOW - 10 * HOUR, 40), ...calls(NOW - HOUR, 20), ...calls(NOW - 30000, 200)];
   const { data } = value.buildReport(base(), events, null, rates);
@@ -265,6 +329,16 @@ test('the Linux-compatible CLI fetches only usage and persists aggregate history
     await assert.rejects(run(process.execPath, [cli, 'value', '--refresh', '--json'], {
       env: Object.assign({}, env, { USAGE_LIMITS_FETCH: 'off' }),
     }), (error) => error.code === 1 && JSON.parse(error.stdout).refresh === 'disabled');
+    utilization.five_hour = { utilization: 0, resets_at: null };
+    await Promise.all([
+      run(process.execPath, [cli, 'value', '--measure-start', '--json'], { env }),
+      ...Array.from({ length: 6 }, () => run(process.execPath, [cli, 'value', '--json'], { env })),
+    ]);
+    const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'usage-limits-value.json'), 'utf8'));
+    assert.equal(persisted.measurements.length, 1, 'background readers cannot erase a measurement click');
+    assert.equal(persisted.measurements[0].phase, 'waiting-window', 'an older reading cannot attach the zero to the old cycle');
+    const stopped = await run(process.execPath, [cli, 'value', '--measure-stop', '--json'], { env });
+    assert.equal(JSON.parse(stopped.stdout).measurement.phase, 'stopped');
     await assert.rejects(run(process.execPath, [cli, 'value', '--host', 'codex'], { env }), /unsupported/);
   } finally {
     await new Promise((resolve) => server.close(resolve));

@@ -18,6 +18,18 @@ node bin/cli.js value
 watch -n 60 'node bin/cli.js value'
 ```
 
+## Linux 图形界面
+
+```bash
+node bin/cli.js gui
+```
+
+原生 GTK 3 窗口提供“立即刷新”、5h / 每周额度卡片、token 与模型明细、历史记录和 JSON 导出。需要 Python 3、`python3-gi` 和 GTK 3（Ubuntu 包名 `gir1.2-gtk-3.0`）。窗口每分钟更新本地数据，“立即刷新”或 F5 会直接请求真实额度。
+
+“完整测量”页可点击 **从 0% 开始测量**；当前非 0% 时会等待下一次清零。观察到真实 0% 后，单独累计新周期的本机调用；遇到首次 5h 限额拒绝或 100% 额度快照会自动保存。结果标明截止依据，手动结束或周期自然结束会标为部分消耗，不当作跑满额度。已部署后台采样的环境中，关闭窗口后仍继续记录；单独运行 GUI 的环境需要保持程序运行。
+
+测量及周期历史保存在配置目录的 `usage-limits-value.json`，窗口可直接导出。命令行也支持 `value --measure-start` / `value --measure-stop`。测量美元数是本轮实际记录的 token 按 API 价格折算的消耗，与按百分比推算的整段额度估值分开显示。
+
 ```bash
 node bin/cli.js value --json
 node bin/cli.js value --refresh
