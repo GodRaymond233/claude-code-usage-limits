@@ -1,3 +1,69 @@
+# Claude 订阅额度的 API 等价价值
+
+此 fork 基于 [ridelink0/claude-code-usage-limits](https://github.com/ridelink0/claude-code-usage-limits)，保留上游 MIT 许可和署名。新增面向 **Linux、本机执行的 Claude Desktop Code / Claude Code、OAuth 订阅**的独立 `value` 报告，查看 5 小时和每周额度折算成 API 计费各值多少美元。
+
+## Linux 快速使用
+
+需要 Node.js 18 或以上。在运行 Code 会话的同一 Linux 用户下执行：
+
+```bash
+git clone --branch feat/claude-quota-value https://github.com/GodRaymond233/claude-code-usage-limits.git
+cd claude-code-usage-limits
+node bin/cli.js value
+```
+
+不需要安装 npm 依赖。独立命令读取本机日志和额度，不安装钩子、不改变模型或 effort 设置。可选用系统 `watch` 每分钟更新：
+
+```bash
+watch -n 60 'node bin/cli.js value'
+```
+
+```bash
+node bin/cli.js value --json
+node bin/cli.js value --offline
+node bin/cli.js value --prices ./prices.json
+```
+
+已安装完整 Claude Code 插件的用户还可使用 `/usage-limits:value`。完整插件包含下面上游文档所述的预算钩子；仅查看额度价值时，使用独立命令即可。
+
+## 显示什么
+
+每种额度单独显示输入、输出、缓存写入、缓存读取 token，API 等价已用费用、预计整段额度价值、快照时预计剩余价值、模型明细和样本状态。**美元均为按 API 价格折算的价值，不是订阅以外产生的账单。**
+
+优先使用两次真实额度读数之间的消耗：
+
+```text
+预计整段额度价值 = 两次读数间的 API 等价费用 ÷ 消耗的百分点 × 100
+```
+
+首次采样可用本周期累计费用除以已用比例做临时估计，界面会标明这假设本地日志覆盖该周期全部消耗。两次快照之间至少变化 5 个百分点、至少 5 次可计价调用后，可使用增量估计。低于 5%、高于 95%、没有重置时间、没有有效时间戳、快照超过 10 分钟、扫描不完整或存在未知价格时，不从该读数新建总容量估值。封顶时可继续显示同周期此前测得的估值，并保留其采样时间。
+
+token 和已用费用包含最新的本地调用；总价值及剩余价值与额度快照对齐，不把快照之后的费用除以旧百分比。5 小时和每周是独立限制，不相加，也不把每周容量按固定倍数当作每月容量。模型组合或缓存比例变化，估值也会变化。
+
+已观察周期保存在 `~/.claude/usage-limits-value.json`，最多 64 个；结束后会在历史区域显示，重启命令仍可读取。账号、订阅档位或价格表变化后重新采样。不保存对话内容或 OAuth token，也不会凭现有 token 日志补造过去未观察到的额度读数。无法识别账号时，不复用上次校准。
+
+## 数据与价格
+
+- 日志：`~/.claude/projects/**/*.jsonl`，包括子代理和 workflow 日志；恢复或 fork 的重复消息只计一次，流式消息使用最终 token 数。
+- 额度：本机 `~/.claude.json` / `~/.claude/.claude.json` 中的真实快照，以及 OAuth usage 接口。在线命令会在数据超过 3 分钟后尝试刷新，并遵守请求退避。
+- OAuth：读取 `~/.claude/.credentials.json` 中现有凭据，发送到 Anthropic 的 usage 接口。凭据过期由 Claude Code 自行续期。`--offline` 或 `USAGE_LIMITS_FETCH=off` 可禁止联网。
+- 非默认配置目录：通过 `CLAUDE_CONFIG_DIR` 指向包含 `projects/` 和 `.credentials.json` 的目录。仅在 Desktop 登录是否会生成这些文件取决于客户端；若提示缺少登录，可在同用户的 Claude Code CLI 登录。请先确认 Desktop Code 会话实际写入这些日志。
+- 本机之外或普通 Chat 的用量不在 token 日志中，可能使容量低估。更换订阅账号后，也应使用对应账号的日志目录，避免混入旧账号调用。
+
+已按 [Anthropic 官方价格表](https://platform.claude.com/docs/en/about-claude/pricing) 修正 Sonnet 5.5 缓存读取单价为 `$0.10 / 百万 token`。所有价格单位均为 **USD / 百万 token**，可用以下 `prices.json` 格式覆盖具体模型：
+
+```json
+{
+  "claude-sonnet-5-5": { "input": 2, "output": 10, "cacheRead": 0.1 }
+}
+```
+
+每行必须提供 `input` 和 `output`；`cacheRead` 省略时使用输入单价的 10%。缓存写入按 5 分钟 1.25 倍、1 小时 2 倍输入单价计价。价格变动后自动重算日志缓存、重新校准。未知模型明确标记，补齐价格前不宣称它的订阅总容量。
+
+下方保留上游插件功能及安装说明；上游 npm 包不包含此 fork 的 `value` 命令。
+
+---
+
 # usage-limits
 
 [![npm](https://img.shields.io/npm/v/claude-usage-limits)](https://www.npmjs.com/package/claude-usage-limits)

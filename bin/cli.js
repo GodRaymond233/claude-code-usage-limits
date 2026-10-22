@@ -15,6 +15,11 @@ const HELP = `claude-usage-limits - how much agent usage is left, and whether th
   claude-usage-limits --sessions          what recent sessions cost
   claude-usage-limits --session last      one session in full, or give its id
 
+  claude-usage-limits value               Claude 5h/weekly API-equivalent capacity in USD
+  claude-usage-limits value --json        token splits, estimates and observed cycle history
+  claude-usage-limits value --offline     read local data without fetching OAuth usage
+  claude-usage-limits value --prices FILE override per-model USD/million-token prices
+
   claude-usage-limits --host codex        read Codex's limits instead
   claude-usage-limits --host codex --refresh   ask Codex for a live reading
 
@@ -73,6 +78,11 @@ function run(argv) {
     const budget = require('../skills/usage-limits/scripts/mode.js');
     process.stdout.write(budget.main(args.slice(1)) + '\n');
     return Promise.resolve(0);
+  }
+
+  if (args[0] === 'value' || args.indexOf('--value') !== -1) {
+    const value = require('../skills/usage-limits/scripts/quota-value.js');
+    return value.main(args[0] === 'value' ? args.slice(1) : args.filter((arg) => arg !== '--value'));
   }
 
   if (args[0] === 'lowpower') {
