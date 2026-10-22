@@ -24,7 +24,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const https = require('https');
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 
 const atomic = require('./atomic.js');
 
@@ -344,6 +344,36 @@ function fetchDisabled(env) {
   return String((env || process.env).USAGE_LIMITS_FETCH || '').toLowerCase() === 'off';
 }
 
+// Desktop keeps its login in Electron safeStorage. The helper reads it through
+// the user's unlocked keyring and returns usage only; tokens stay in that process.
+async function desktopUsage(options) {
+  const opts = options || {};
+  const env = opts.env || process.env;
+  const directory = env.CLAUDE_DESKTOP_CONFIG_DIR || path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Claude');
+  if (!opts.desktopExec && !fs.existsSync(path.join(directory, 'config.json'))) return bad('no_credentials');
+  try {
+    const payload = { accountUuid: opts.accountUuid || null, configDir: configDir(), desktopConfigDir: directory, timeoutMs: opts.timeoutMs };
+    const stdout = opts.desktopExec ? await opts.desktopExec(payload) : await new Promise((resolve, reject) => {
+      const child = execFile('python3', [path.join(__dirname, 'desktop-usage.py')], {
+        env, timeout: 20000, maxBuffer: MAX_BODY, windowsHide: true,
+      }, (err, out) => err ? reject(err) : resolve(out));
+      child.stdin.on('error', () => {});
+      child.stdin.end(JSON.stringify(payload));
+    });
+    const result = JSON.parse(stdout);
+    if (!result.ok) {
+      const allowed = new Set(['no_credentials', 'expired', 'unauthorized', 'forbidden', 'rate_limited', 'offline', 'server', 'http', 'bad_response', 'desktop_keyring_locked', 'desktop_dependencies']);
+      return bad(allowed.has(result.kind) ? result.kind : 'bad_response', result.status, result.retryAfterMs);
+    }
+    if (!result.utilization || typeof result.utilization !== 'object' || Array.isArray(result.utilization) ||
+        !Number.isFinite(result.fetchedAtMs) || !result.accountUuid ||
+        (opts.accountUuid && result.accountUuid !== opts.accountUuid)) return bad('bad_response');
+    return { ok: true, status: 200, utilization: result.utilization, fetchedAtMs: result.fetchedAtMs, accountUuid: result.accountUuid };
+  } catch (err) {
+    return bad(err && err.code === 'ENOENT' ? 'desktop_dependencies' : 'bad_response');
+  }
+}
+
 // Take a reading and keep it. Whatever goes wrong, the previous reading on
 // disk comes back so the caller always has something to draw.
 async function refresh(options) {
@@ -354,6 +384,16 @@ async function refresh(options) {
   }
   const creds = readToken({ file: opts.credentialsFile, platform: opts.platform, exec: opts.exec });
   if (!creds.token) {
+    if ((opts.platform || process.platform) === 'linux' && !opts.credentialsFile && creds.reason === 'no_credentials') {
+      const outcome = await desktopUsage(opts);
+      if (!outcome.ok) return { outcome, snapshot: readLive() };
+      const snapshot = {
+        fetchedAtMs: Number.isFinite(opts.now) ? opts.now : outcome.fetchedAtMs,
+        utilization: outcome.utilization, accountUuid: outcome.accountUuid, source: 'desktop-api',
+      };
+      writeLive(snapshot);
+      return { outcome, snapshot };
+    }
     return {
       outcome: bad('no_credentials', null, null, creds.reason === 'unreadable' ? 'the login file could not be read' : 'no Claude login found'),
       snapshot: readLive(),
@@ -476,4 +516,5 @@ module.exports = {
   fetchDisabled,
   refresh,
   refreshIfStale,
+  desktopUsage,
 };

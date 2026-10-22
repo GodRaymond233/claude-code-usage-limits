@@ -14,13 +14,13 @@
     "statusline",
     "cli"
   ],
-  "homepage": "https://github.com/ridelink0/claude-code-usage-limits",
+  "homepage": "https://github.com/GodRaymond233/claude-code-usage-limits",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ridelink0/claude-code-usage-limits.git"
+    "url": "git+https://github.com/GodRaymond233/claude-code-usage-limits.git"
   },
   "bugs": {
-    "url": "https://github.com/ridelink0/claude-code-usage-limits/issues"
+    "url": "https://github.com/GodRaymond233/claude-code-usage-limits/issues"
   },
   "license": "MIT",
   "author": "Ridelink (https://github.com/ridelink0)",

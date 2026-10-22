@@ -94,6 +94,39 @@ test('readToken says why when there is nothing to read', () => {
   assert.strictEqual(empty.reason, 'no_credentials');
 });
 
+test('Desktop usage crosses the helper boundary without exporting credentials', async () => {
+  const secret = 'fixture-desktop-token';
+  const result = await live.desktopUsage({
+    accountUuid: 'acc',
+    desktopExec: async () => JSON.stringify({ ok: true, utilization: SAMPLE, fetchedAtMs: NOW, accountUuid: 'acc', token: secret }),
+  });
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.utilization, SAMPLE);
+  assert.ok(!JSON.stringify(result).includes(secret));
+  const wrong = await live.desktopUsage({
+    accountUuid: 'other',
+    desktopExec: async () => JSON.stringify({ ok: true, utilization: SAMPLE, fetchedAtMs: NOW, accountUuid: 'acc' }),
+  });
+  assert.strictEqual(wrong.kind, 'bad_response', 'a different Desktop account cannot supply the meter');
+  const locked = await live.desktopUsage({ desktopExec: async () => JSON.stringify({ ok: false, kind: 'desktop_keyring_locked' }) });
+  assert.strictEqual(locked.kind, 'desktop_keyring_locked');
+  const broken = await live.desktopUsage({ desktopExec: async () => { throw new Error(secret); } });
+  assert.strictEqual(broken.kind, 'bad_response');
+  assert.ok(!JSON.stringify(broken).includes(secret));
+});
+
+test('Linux Desktop usage is persisted as a snapshot when the CLI has no login file', async () => {
+  await withConfigDir(tempDir(), async () => {
+    const result = await live.refresh({ platform: 'linux', accountUuid: 'acc', now: NOW,
+      desktopExec: async () => JSON.stringify({ ok: true, utilization: SAMPLE, fetchedAtMs: NOW, accountUuid: 'acc' }),
+    });
+    assert.strictEqual(result.outcome.ok, true);
+    assert.strictEqual(live.readLive().source, 'desktop-api');
+    assert.strictEqual(live.readLive().accountUuid, 'acc');
+    assert.deepStrictEqual(live.readLive().utilization, SAMPLE);
+  });
+});
+
 test('readToken asks the keychain on macOS when the file is absent', () => {
   const dir = tempDir();
   const calls = [];

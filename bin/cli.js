@@ -15,6 +15,15 @@ const HELP = `claude-usage-limits - how much agent usage is left, and whether th
   claude-usage-limits --sessions          what recent sessions cost
   claude-usage-limits --session last      one session in full, or give its id
 
+  claude-usage-limits value               Claude 5h/weekly API-equivalent capacity in USD
+  claude-usage-limits value --json        token splits, estimates and observed cycle history
+  claude-usage-limits value --refresh     fetch a real quota snapshot now, bypassing cached age
+  claude-usage-limits value --offline     read local data without fetching OAuth usage
+  claude-usage-limits value --prices FILE override per-model USD/million-token prices
+  claude-usage-limits value --measure-start   wait for 0% and record a full 5h allowance
+  claude-usage-limits value --measure-stop    save the current partial measurement
+  claude-usage-limits gui                 open the native Linux quota and measurement window
+
   claude-usage-limits --host codex        read Codex's limits instead
   claude-usage-limits --host codex --refresh   ask Codex for a live reading
 
@@ -53,7 +62,7 @@ uploaded. The panel, and the hooks when the reading on disk has aged, take the
 same reading Claude Code takes for /usage, with the login Claude Code already
 holds, and send it nowhere else (USAGE_LIMITS_FETCH=off keeps it all offline).
 
-  https://github.com/ridelink0/claude-code-usage-limits
+  https://github.com/GodRaymond233/claude-code-usage-limits
 `;
 
 function run(argv) {
@@ -73,6 +82,21 @@ function run(argv) {
     const budget = require('../skills/usage-limits/scripts/mode.js');
     process.stdout.write(budget.main(args.slice(1)) + '\n');
     return Promise.resolve(0);
+  }
+
+  if (args[0] === 'gui') {
+    if (process.platform !== 'linux') return Promise.reject(new Error('The graphical window requires Linux, Python 3 and GTK 3.'));
+    const path = require('path');
+    return new Promise((resolve, reject) => {
+      const child = require('child_process').spawn('python3', [path.join(__dirname, '../skills/usage-limits/scripts/desktop-gui.py')], { stdio: 'inherit' });
+      child.once('error', reject);
+      child.once('exit', (code) => resolve(code === null ? 1 : code));
+    });
+  }
+
+  if (args[0] === 'value' || args.indexOf('--value') !== -1) {
+    const value = require('../skills/usage-limits/scripts/quota-value.js');
+    return value.main(args[0] === 'value' ? args.slice(1) : args.filter((arg) => arg !== '--value'));
   }
 
   if (args[0] === 'lowpower') {

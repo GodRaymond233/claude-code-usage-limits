@@ -67,6 +67,21 @@ test('a snapshotless stub never passes for the account file', () => {
   });
 });
 
+test('Desktop account metadata wins over a migration stub before any CLI usage snapshot exists', () => {
+  const home = tempDir('desktop-account');
+  const scoped = path.join(home, '.claude');
+  fs.mkdirSync(scoped);
+  fs.writeFileSync(path.join(scoped, '.claude.json'), STUB);
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'desktop-account' } }));
+  const original = os.homedir;
+  os.homedir = () => home;
+  try {
+    withConfigDir(scoped, () => assert.strictEqual(usage.accountFile(), path.join(home, '.claude.json')));
+  } finally {
+    os.homedir = original;
+  }
+});
+
 test('detection never picks Codex while a Claude snapshot is readable', () => {
   const dir = tempDir('detect');
   fs.writeFileSync(path.join(dir, '.claude.json'), WITH_METER, 'utf8');

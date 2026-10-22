@@ -1,8 +1,8 @@
 {
   "name": "usage-limits",
   "owner": {
-    "name": "Ridelink",
-    "url": "https://github.com/ridelink0"
+    "name": "GodRaymond233",
+    "url": "https://github.com/GodRaymond233"
   },
   "description": "Usage limit aware planning for Claude Code.",
   "plugins": [

@@ -71,9 +71,8 @@ const RATES = {
   'claude-opus-4-8': { input: 5, output: 25 },
   'claude-opus-4-7': { input: 5, output: 25 },
   'claude-opus-4-6': { input: 5, output: 25 },
-  // Sonnet 5.5 keeps Sonnet 5's $2/$10, and its $0.20 reads are the tenth rule
-  // (claude-api model table, cached 2026-09-25).
-  'claude-sonnet-5-5': { input: 2, output: 10 },
+  // Sonnet 5.5 cache reads are $0.10/MTok (official pricing, 2026-10-22).
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.1 },
   'claude-sonnet-5': { input: 2, output: 10 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 1, output: 5 },
@@ -128,8 +127,8 @@ function normalizeModel(model) {
 }
 
 // Whether the price came from the table or from an assumption.
-function isKnownModel(model) {
-  return Object.prototype.hasOwnProperty.call(RATES, normalizeModel(model));
+function isKnownModel(model, table) {
+  return Object.prototype.hasOwnProperty.call(table || RATES, normalizeModel(model));
 }
 
 // Cache traffic is priced as a multiple of the input rate.
@@ -380,6 +379,10 @@ function accountFile() {
     if (hasSnapshot(file)) return file;
   }
   for (const file of candidates) {
+    const parsed = readJson(file);
+    if (parsed && parsed.oauthAccount && parsed.oauthAccount.accountUuid) return file;
+  }
+  for (const file of candidates) {
     if (fs.existsSync(file)) return file;
   }
   return candidates[candidates.length - 1];
@@ -393,16 +396,17 @@ function readJson(file) {
   }
 }
 
-function rateFor(model) {
+function rateFor(model, table) {
+  const rates = table || RATES;
   const id = normalizeModel(model);
-  if (RATES[id]) return RATES[id];
-  return familyAverage(familyOf(id)) || FALLBACK_RATE;
+  if (rates[id]) return rates[id];
+  return familyAverage(familyOf(id), rates) || FALLBACK_RATE;
 }
 
 // Cost of one assistant turn, in USD, from its usage record.
-function costOf(usage, model) {
+function costOf(usage, model, table) {
   if (!usage) return 0;
-  const rate = rateFor(model);
+  const rate = rateFor(model, table);
   const creation = usage.cache_creation || {};
   const write5m = creation.ephemeral_5m_input_tokens || 0;
   const write1h = creation.ephemeral_1h_input_tokens || 0;
@@ -479,7 +483,7 @@ function tokenParts(usage) {
 // cost. `fallbackModel` is only for a record that names none: a string, or a
 // function called at most once so the parent transcript is read only when a
 // record actually needs it.
-function eventFrom(line, seen, project, fallbackModel) {
+function eventFrom(line, seen, project, fallbackModel, table) {
   if (line.indexOf('"assistant"') === -1 || line.indexOf('"usage"') === -1) return null;
   let entry;
   try {
@@ -548,7 +552,7 @@ function eventFrom(line, seen, project, fallbackModel) {
     dedupId: id === '|' ? null : id,
     model,
     effort: entry.effort || null,
-    cost: costOf(entry.message.usage, model),
+    cost: costOf(entry.message.usage, model, table),
     tokens: tokensOf(entry.message.usage),
     parts,
     // What the model was shown on this call: everything except what it wrote.
@@ -903,12 +907,18 @@ function scanFile() {
   return path.join(configDir(), 'usage-limits-scan.json');
 }
 
-function readScanCache() {
+function pricingKey(table) {
+  const rates = table || RATES;
+  return JSON.stringify(Object.keys(rates).sort().map((id) => [id, rates[id]]));
+}
+
+function readScanCache(table) {
   const parsed = readJson(scanFile());
-  if (!parsed || parsed.version !== SCAN_VERSION || !parsed.files || typeof parsed.files !== 'object') {
-    return { version: SCAN_VERSION, files: {} };
+  const key = pricingKey(table);
+  if (!parsed || parsed.version !== SCAN_VERSION || parsed.pricingKey !== key || !parsed.files || typeof parsed.files !== 'object') {
+    return { version: SCAN_VERSION, pricingKey: key, files: {} };
   }
-  return { version: SCAN_VERSION, files: parsed.files };
+  return { version: SCAN_VERSION, pricingKey: key, files: parsed.files };
 }
 
 // Every state file the plugin shares between processes goes through here.
@@ -1053,13 +1063,13 @@ function unpackEvent(row, project) {
 // the offset has to be a byte count: a transcript is full of characters that
 // are more than one byte, and counting them as one would drift the offset and
 // silently drop turns. A trailing partial line is left unconsumed.
-function parseSlice(buffer, project, baseOffset, fallbackModel) {
+function parseSlice(buffer, project, baseOffset, fallbackModel, table) {
   const events = [];
   let start = 0;
   let consumed = 0;
   for (let i = 0; i < buffer.length; i += 1) {
     if (buffer[i] !== 0x0a) continue;
-    const event = eventFrom(buffer.toString('utf8', start, i), null, project, fallbackModel);
+    const event = eventFrom(buffer.toString('utf8', start, i), null, project, fallbackModel, table);
     if (event) events.push(event);
     start = i + 1;
     consumed = start;
@@ -1068,7 +1078,7 @@ function parseSlice(buffer, project, baseOffset, fallbackModel) {
 }
 
 // One file's events, reusing whatever the cache already holds of it.
-function eventsForFile(entry, cache, keepFrom) {
+function eventsForFile(entry, cache, keepFrom, table) {
   let stat;
   try {
     stat = fs.statSync(entry.file);
@@ -1101,7 +1111,8 @@ function eventsForFile(entry, cache, keepFrom) {
     readSlice(entry.file, from, stat.size),
     entry.project,
     from,
-    entry.parent ? sessionModelReader(entry.parent) : null
+    entry.parent ? sessionModelReader(entry.parent) : null,
+    table
   );
   const rows = (usable ? cached.rows : [])
     .concat(parsed.events.map(packEvent))
@@ -1144,7 +1155,7 @@ async function readClaudeEvents(since, options) {
     })
     .sort((a, b) => b.at - a.at);
 
-  const cache = opts.cache === false ? { version: SCAN_VERSION, files: {} } : readScanCache();
+  const cache = opts.cache === false ? { version: SCAN_VERSION, files: {} } : readScanCache(opts.rates);
   const collected = [];
   const alive = new Set();
   let changed = false;
@@ -1156,7 +1167,7 @@ async function readClaudeEvents(since, options) {
       break;
     }
     alive.add(entry.file);
-    const result = eventsForFile(entry, cache, keepFrom);
+    const result = eventsForFile(entry, cache, keepFrom, opts.rates);
     if (!result) {
       changed = true;
       continue;
@@ -4421,6 +4432,7 @@ module.exports = {
   writeJsonAtomic,
   parseSlice,
   RATES,
+  pricingKey,
   WINDOWS,
   rateFor,
   familyOf,
