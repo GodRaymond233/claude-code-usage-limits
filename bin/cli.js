@@ -58,7 +58,7 @@ uploaded. The panel, and the hooks when the reading on disk has aged, take the
 same reading Claude Code takes for /usage, with the login Claude Code already
 holds, and send it nowhere else (USAGE_LIMITS_FETCH=off keeps it all offline).
 
-  https://github.com/ridelink0/claude-code-usage-limits
+  https://github.com/GodRaymond233/claude-code-usage-limits
 `;
 
 function run(argv) {

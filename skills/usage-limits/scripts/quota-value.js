@@ -180,6 +180,15 @@ const STATUS = {
   estimated: '根据本机用量估算',
 };
 
+const REFRESH = {
+  live: 'OAuth 额度已更新', fresh: '使用近期快照', 'local-only': '仅本地数据',
+  disabled: '已禁止联网', offline: '网络不可用，使用本地数据', backoff: '请求退避中',
+  no_credentials: '缺少 Claude OAuth 凭据', expired: '登录已过期，等待 Claude Code 续期',
+  unauthorized: '登录已失效，请重新登录 Claude Code', forbidden: '此登录无法读取额度',
+  rate_limited: '额度接口限流', server: '额度服务暂不可用', http: '额度请求失败',
+  bad_response: '额度接口响应不可读',
+};
+
 function money(value) {
   return Number.isFinite(value) ? '$' + value.toFixed(2) : '待采样';
 }
@@ -188,7 +197,7 @@ function render(data) {
   const lines = [
     'Claude 订阅额度的 API 等价价值（USD）',
     '套餐：' + data.plan + ' | 快照：' + (Number.isFinite(data.snapshotFetchedAt) ? new Date(data.snapshotFetchedAt).toLocaleString() : '无'),
-    '刷新：' + (data.refresh || data.snapshotSource || '本地数据'),
+    '刷新：' + (REFRESH[data.refresh] || '本地数据'),
     '',
   ];
   for (const row of data.windows) {
@@ -215,6 +224,7 @@ function render(data) {
   }
   if (data.persistence === false) lines.push('历史记录写入失败；本次读数仍可查看。');
   lines.push('估值不是额外账单；只覆盖本机日志，其他设备或普通 Chat 的消耗会影响反推。');
+  lines.push('估值对应采样时的模型与缓存组合；使用组合变化后，API 等价容量也会变化。');
   lines.push('总价值和剩余价值按额度快照时间计算；token 与已用费用包含快照之后的新调用。');
   return lines.join('\n');
 }
@@ -225,14 +235,14 @@ async function collect(options) {
   const rates = loadPrices(opts.prices);
   const accountId = usage.accountUuid();
   let base = usage.collectClaude(Date.now());
-  let refresh = { skipped: 'offline', outcome: null };
+  let refresh = { skipped: 'local-only', outcome: null };
   if (!opts.offline) refresh = await live.refreshIfStale({ cacheFetchedAtMs: base.snapshotFetchedAt, accountUuid: accountId });
   base = Object.assign(usage.collectClaude(Date.now()), { accountId: usage.accountUuid() });
   const events = await usage.readClaudeEvents(base.now - 8 * DAY, { rates });
   let previous = null;
   try { previous = JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch (err) { /* First observation. */ }
   const result = buildReport(base, events, previous, rates);
-  result.data.refresh = refresh.outcome ? live.describe(refresh.outcome) : refresh.skipped;
+  result.data.refresh = refresh.outcome ? (refresh.outcome.ok ? 'live' : refresh.outcome.kind) : refresh.skipped;
   try {
     fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
     result.data.persistence = usage.writeJsonAtomic(stateFile(), result.state);

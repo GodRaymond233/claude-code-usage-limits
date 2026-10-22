@@ -222,6 +222,7 @@ test('the Linux-compatible CLI fetches only usage and persists aggregate history
     assert.equal(data.persistence, true);
     const offline = await run(process.execPath, [cli, '--value', '--offline'], { env });
     assert.equal(requests, 1, 'offline mode makes no request');
+    assert.match(offline.stdout, /刷新：仅本地数据/);
     assert.match(offline.stdout, /预计总价值：\$12\.50/);
     assert.doesNotMatch(fetched.stdout + fetched.stderr + offline.stdout + fs.readFileSync(path.join(dir, 'usage-limits-value.json'), 'utf8'), /fixture-oauth-token|Bearer/);
     await assert.rejects(run(process.execPath, [cli, 'value', '--host', 'codex'], { env }), /unsupported/);
