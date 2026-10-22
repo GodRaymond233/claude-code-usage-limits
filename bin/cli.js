@@ -17,6 +17,7 @@ const HELP = `claude-usage-limits - how much agent usage is left, and whether th
 
   claude-usage-limits value               Claude 5h/weekly API-equivalent capacity in USD
   claude-usage-limits value --json        token splits, estimates and observed cycle history
+  claude-usage-limits value --refresh     fetch a real quota snapshot now, bypassing cached age
   claude-usage-limits value --offline     read local data without fetching OAuth usage
   claude-usage-limits value --prices FILE override per-model USD/million-token prices
 

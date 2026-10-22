@@ -239,7 +239,10 @@ async function collect(options) {
   const accountId = usage.accountUuid();
   let base = usage.collectClaude(Date.now());
   let refresh = { skipped: 'local-only', outcome: null };
-  if (!opts.offline) refresh = await live.refreshIfStale({ cacheFetchedAtMs: base.snapshotFetchedAt, accountUuid: accountId, timeoutMs: 15000 });
+  if (!opts.offline) {
+    const request = { cacheFetchedAtMs: base.snapshotFetchedAt, accountUuid: accountId, timeoutMs: 15000 };
+    refresh = opts.refresh ? await live.refresh(request) : await live.refreshIfStale(request);
+  }
   base = Object.assign(usage.collectClaude(Date.now()), { accountId: usage.accountUuid() });
   const events = await usage.readClaudeEvents(base.now - 8 * DAY, { rates });
   let previous = null;
@@ -261,13 +264,15 @@ async function main(argv) {
     const arg = argv[i];
     if (arg === '--json') options.json = true;
     else if (arg === '--offline') options.offline = true;
+    else if (arg === '--refresh') options.refresh = true;
     else if (arg === '--prices' && argv[i + 1] && !argv[i + 1].startsWith('--')) options.prices = argv[++i];
     else if (arg === '--host' && argv[i + 1] === 'claude') i++;
-    else throw new Error('value: unsupported or incomplete option ' + arg + '; use --json, --offline, --prices FILE or --host claude');
+    else throw new Error('value: unsupported or incomplete option ' + arg + '; use --json, --refresh, --offline, --prices FILE or --host claude');
   }
+  if (options.refresh && options.offline) throw new Error('value: --refresh and --offline cannot be combined');
   const data = await collect(options);
   process.stdout.write((options.json ? JSON.stringify(data, null, 2) : render(data)) + '\n');
-  return 0;
+  return options.refresh && data.refresh !== 'live' ? 1 : 0;
 }
 
 module.exports = { main, collect, buildReport, render, loadPrices, stateFile, MAX_SNAPSHOT_AGE, MAX_CYCLES };

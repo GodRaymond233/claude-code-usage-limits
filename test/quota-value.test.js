@@ -257,6 +257,14 @@ test('the Linux-compatible CLI fetches only usage and persists aggregate history
     assert.match(offline.stdout, /刷新：仅本地数据/);
     assert.match(offline.stdout, /预计总价值：\$12\.50/);
     assert.doesNotMatch(fetched.stdout + fetched.stderr + offline.stdout + fs.readFileSync(path.join(dir, 'usage-limits-value.json'), 'utf8'), /fixture-oauth-token|Bearer/);
+    const refreshed = await run(process.execPath, [cli, 'value', '--refresh', '--json'], { env });
+    assert.equal(requests, 2, 'manual refresh bypasses the recent cached reading');
+    assert.equal(JSON.parse(refreshed.stdout).refresh, 'live');
+    await assert.rejects(run(process.execPath, [cli, 'value', '--refresh', '--offline'], { env }), /cannot be combined/);
+    assert.equal(requests, 2, 'conflicting flags do not make a request');
+    await assert.rejects(run(process.execPath, [cli, 'value', '--refresh', '--json'], {
+      env: Object.assign({}, env, { USAGE_LIMITS_FETCH: 'off' }),
+    }), (error) => error.code === 1 && JSON.parse(error.stdout).refresh === 'disabled');
     await assert.rejects(run(process.execPath, [cli, 'value', '--host', 'codex'], { env }), /unsupported/);
   } finally {
     await new Promise((resolve) => server.close(resolve));

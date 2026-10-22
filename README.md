@@ -20,9 +20,12 @@ watch -n 60 'node bin/cli.js value'
 
 ```bash
 node bin/cli.js value --json
+node bin/cli.js value --refresh
 node bin/cli.js value --offline
 node bin/cli.js value --prices ./prices.json
 ```
+
+`--refresh` 立即向额度接口请求一次，不等待 3 分钟缓存间隔；请求失败时仍显示本地数据，并返回非零退出码。刷新不会清空历史、改变服务端额度或把当前周期人为置零；新周期按服务端重置时间独立统计。
 
 已安装完整 Claude Code 插件的用户还可使用 `/usage-limits:value`。完整插件包含下面上游文档所述的预算钩子；仅查看额度价值时，使用独立命令即可。
 
