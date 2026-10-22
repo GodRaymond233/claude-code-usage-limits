@@ -379,6 +379,10 @@ function accountFile() {
     if (hasSnapshot(file)) return file;
   }
   for (const file of candidates) {
+    const parsed = readJson(file);
+    if (parsed && parsed.oauthAccount && parsed.oauthAccount.accountUuid) return file;
+  }
+  for (const file of candidates) {
     if (fs.existsSync(file)) return file;
   }
   return candidates[candidates.length - 1];

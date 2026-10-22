@@ -22,6 +22,36 @@ const HOUR = 60 * MINUTE;
 const NOW = Date.parse('2026-10-22T12:00:00Z');
 const rates = value.loadPrices();
 
+test('Desktop OAuth selection matches account, organization, audience and scopes, preferring a live Code token', async (t) => {
+  let python = null;
+  for (const candidate of ['python3', 'python']) {
+    try { await run(candidate, ['--version']); python = candidate; break; } catch (err) { /* Try the other launcher. */ }
+  }
+  if (!python) return t.skip('Python 3 is optional outside Linux Desktop');
+  const source = path.join(__dirname, '..', 'skills', 'usage-limits', 'scripts', 'desktop-usage.py');
+  const script = `import importlib.util,sys
+spec=importlib.util.spec_from_file_location('desktop_usage',sys.argv[1])
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+account={'accountUuid':'acc','organizationUuid':'org'}
+prefix='acct:acc|client:org:https://api.anthropic.com:'
+cache={
+ prefix+'user:inference user:profile':{'token':'live','expiresAt':3000},
+ prefix+'user:inference user:profile user:sessions:claude_code':{'token':'old','expiresAt':1000},
+ 'acct:other|client:org:https://api.anthropic.com:user:inference user:profile':{'token':'other','expiresAt':9000},
+ 'acct:acc|client:other:https://api.anthropic.com:user:inference user:profile':{'token':'other-org','expiresAt':9000},
+ prefix+'user:inference':{'token':'no-profile','expiresAt':9000},
+ 'acct:acc|client:org:https://example.com:user:inference user:profile':{'token':'wrong-audience','expiresAt':9000}}
+assert module.select_token(cache,account,2000)['token']=='live'
+cache[prefix+'user:inference user:profile user:sessions:claude_code']['expiresAt']=4000
+assert module.select_token(cache,account,2000)['token']=='old'
+assert module.select_token(cache,{'accountUuid':'none','organizationUuid':'org'},2000) is None
+assert module.NoRedirect().redirect_request(None,None,302,'',{},'https://example.com') is None
+print('OK')`;
+  const result = await run(python, ['-c', script, source], { env: Object.assign({}, process.env, { PYTHONDONTWRITEBYTECODE: '1' }) });
+  assert.equal(result.stdout.trim(), 'OK');
+});
+
 function base(extra) {
   return Object.assign({
     now: NOW, accountId: 'fixture-account', planId: 'max_5x', planTier: 'default_claude_max_5x', plan: 'Claude Max 5x',

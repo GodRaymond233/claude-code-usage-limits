@@ -187,6 +187,8 @@ const REFRESH = {
   unauthorized: '登录已失效，请重新登录 Claude Code', forbidden: '此登录无法读取额度',
   rate_limited: '额度接口限流', server: '额度服务暂不可用', http: '额度请求失败',
   bad_response: '额度接口响应不可读',
+  desktop_keyring_locked: '请在 Linux 桌面会话中解锁登录钥匙串',
+  desktop_dependencies: 'Desktop 接入需要 Python 3、python3-dbus 和 python3-cryptography',
 };
 
 function money(value) {

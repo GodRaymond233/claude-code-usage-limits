@@ -46,8 +46,9 @@ token 和已用费用包含最新的本地调用；总价值及剩余价值与�
 
 - 日志：`~/.claude/projects/**/*.jsonl`，包括子代理和 workflow 日志；恢复或 fork 的重复消息只计一次，流式消息使用最终 token 数。
 - 额度：本机 `~/.claude.json` / `~/.claude/.claude.json` 中的真实快照，以及 OAuth usage 接口。在线命令会在数据超过 3 分钟后尝试刷新，并遵守请求退避。
-- OAuth：读取 `~/.claude/.credentials.json` 中现有凭据，发送到 Anthropic 的 usage 接口。凭据过期由 Claude Code 自行续期。`--offline` 或 `USAGE_LIMITS_FETCH=off` 可禁止联网。
-- 非默认配置目录：通过 `CLAUDE_CONFIG_DIR` 指向包含 `projects/` 和 `.credentials.json` 的目录。仅在 Desktop 登录是否会生成这些文件取决于客户端；若提示缺少登录，可在同用户的 Claude Code CLI 登录。请先确认 Desktop Code 会话实际写入这些日志。
+- OAuth：优先读取 `~/.claude/.credentials.json` 中现有凭据。Linux 仅在 Desktop 登录时，读取同用户 Desktop 的加密缓存，通过已解锁的系统钥匙串访问，并在辅助进程内向 Anthropic 查询额度；只返回额度，不导出或另存 OAuth token。支持当前 Desktop 的 libsecret / `v11` safeStorage 格式，要求 Python 3、`python3-dbus`、`python3-cryptography`，在登录的 Linux 桌面会话下运行。钥匙串锁定时不会主动弹解锁提示。
+- 凭据过期由 Claude 自行续期，工具不轮换 refresh token。`--offline` 或 `USAGE_LIMITS_FETCH=off` 可禁止联网。
+- 非默认配置目录：`CLAUDE_CONFIG_DIR` 指向 Code 配置与 `projects/`，`CLAUDE_DESKTOP_CONFIG_DIR` 指向 Desktop 配置目录（默认 `$XDG_CONFIG_HOME/Claude` 或 `~/.config/Claude`）。请确认 Desktop Code 会话实际写入这些日志；工具会核对账号和组织，避免使用另一个 Desktop 登录的额度。
 - 本机之外或普通 Chat 的用量不在 token 日志中，可能使容量低估。更换订阅账号后，也应使用对应账号的日志目录，避免混入旧账号调用。
 
 已按 [Anthropic 官方价格表](https://platform.claude.com/docs/en/about-claude/pricing) 修正 Sonnet 5.5 缓存读取单价为 `$0.10 / 百万 token`。所有价格单位均为 **USD / 百万 token**，可用以下 `prices.json` 格式覆盖具体模型：
